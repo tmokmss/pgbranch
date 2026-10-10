@@ -1,0 +1,45 @@
+{
+  "name": "pgbranch",
+  "version": "0.1.0",
+  "description": "Neon-style database branching on an existing Postgres / Aurora PostgreSQL cluster",
+  "type": "module",
+  "license": "Apache-2.0",
+  "bin": {
+    "pgbranch": "dist/cli.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsup",
+    "build:action": "tsup --config tsup.action.config.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run test/unit",
+    "test:integration": "vitest run test/integration",
+    "test:all": "vitest run"
+  },
+  "dependencies": {
+    "@aws-sdk/client-rds-data": "^3.1149.0",
+    "commander": "^12.1.0",
+    "pg": "^8.23.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.23.1",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
