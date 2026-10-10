@@ -17,6 +17,11 @@ export interface DataApiDriverOptions {
   region?: string;
   /** For tests. If not set, a real `RDSDataClient` is created. */
   client?: RdsDataLike;
+  /**
+   * How often to touch a lock transaction so the Data API does not end it as
+   * idle (it does so after about 3 minutes). Default 60 seconds.
+   */
+  keepAliveMs?: number;
 }
 
 type Commands = typeof import('@aws-sdk/client-rds-data');
@@ -86,7 +91,7 @@ export class DataApiDriver implements Driver {
   readonly kind = 'data-api' as const;
   private client: RdsDataLike | undefined;
   private commands: Commands | undefined;
-  private lockTransactions = new Map<string, string>();
+  private lockTransactions = new Map<string, { transactionId: string; timer: NodeJS.Timeout }>();
 
   constructor(private readonly options: DataApiDriverOptions) {
     this.client = options.client;
@@ -146,14 +151,24 @@ export class DataApiDriver implements Driver {
         await client.send(new commands.RollbackTransactionCommand({ ...this.base(), transactionId }));
       }
     }
-    if (locked) this.lockTransactions.set(key, transactionId);
+    if (locked) {
+      const timer = setInterval(() => {
+        this.execute('select 1', [], transactionId).catch(() => {
+          // If this fails, the commit in unlock() fails too and reports it.
+        });
+      }, this.options.keepAliveMs ?? 60_000);
+      timer.unref();
+      this.lockTransactions.set(key, { transactionId, timer });
+    }
     return locked;
   }
 
   async unlock(key: string): Promise<void> {
-    const transactionId = this.lockTransactions.get(key);
-    if (!transactionId) return;
+    const held = this.lockTransactions.get(key);
+    if (!held) return;
     this.lockTransactions.delete(key);
+    clearInterval(held.timer);
+    const { transactionId } = held;
     const { client, commands } = await this.load();
     await client.send(new commands.CommitTransactionCommand({ resourceArn: this.options.resourceArn, secretArn: this.options.secretArn, transactionId }));
   }

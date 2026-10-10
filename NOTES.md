@@ -78,6 +78,7 @@ Decisions and open questions for pgbranch.
 - **[Phase 2] Data API locking.** A session-level advisory lock does not work because each
   `ExecuteStatement` can use a different connection. The driver keeps a Data API transaction open and
   takes `pg_try_advisory_xact_lock` in it. Needs a check on a real cluster (the smoke script does it).
-  The Data API ends idle transactions after some minutes, so long lock holds (the scoped locks held
-  during hooks) may be lost. To be checked.
+  The Data API ends a transaction after about 3 minutes without calls, and the scoped locks are held
+  while hooks run. The driver sends `select 1` in the lock transaction every 60 s to keep it open.
+  The smoke script checks that the lock survives 200 s idle.
 - Concurrent `create --if-not-exists` on the same branch: handled by the branch lock.
