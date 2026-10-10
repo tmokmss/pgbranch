@@ -57,6 +57,26 @@ describe.skipIf(!enabled)('concurrency', () => {
     expect(await databases(prefix)).toContain(`${prefix}_br_race`);
   });
 
+  it('gc skips a branch that another command is using', async () => {
+    const later = () => new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    await withApp(config, (app) => app.create('busy'));
+    const slow = makeConfig(prefix, { hooks: { migrate: sqlHook('select pg_sleep(1.5)') } });
+    const busy = makeApp(slow);
+    const gc = makeApp(config, { now: later });
+    try {
+      const migrating = busy.app.create('busy', { ifNotExists: true });
+      await new Promise((r) => setTimeout(r, 700));
+      const result = await gc.app.gc();
+      expect(result.skipped.map((e) => e.branch)).toContain('busy');
+      expect(result.dropped.map((e) => e.branch)).not.toContain('busy');
+      await migrating;
+    } finally {
+      await busy.close();
+      await gc.close();
+    }
+    expect(await databases(prefix)).toContain(`${prefix}_br_busy`);
+  });
+
   it('create runs while a template refresh is running', async () => {
     const results = await inParallel<unknown>([(app) => app.templateRefresh(), (app) => app.create('during-refresh')]);
     expect(results.map((r) => r.status)).toEqual(['fulfilled', 'fulfilled']);

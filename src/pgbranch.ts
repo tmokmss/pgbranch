@@ -395,7 +395,19 @@ export class PgBranch {
           result.kept.push(entry);
           continue;
         }
-        await this.ops.drop(entry.database);
+        // Skip a branch that another command is working on right now.
+        // tryLock does not wait, so taking it while holding the main lock cannot deadlock.
+        const branchKey = this.lockKey(`branch:${entry.database}`);
+        if (!this.dryRun && !(await this.driver.tryLock(branchKey))) {
+          this.log.warn(`Skipping ${entry.database}: another pgbranch command is using it`);
+          result.skipped.push(entry);
+          continue;
+        }
+        try {
+          await this.ops.drop(entry.database);
+        } finally {
+          if (!this.dryRun) await this.driver.unlock(branchKey);
+        }
         result.dropped.push(entry);
       }
       return result;
