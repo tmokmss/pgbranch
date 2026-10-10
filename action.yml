@@ -1,0 +1,38 @@
+name: pgbranch
+description: Per-branch Postgres databases on an existing Postgres / Aurora PostgreSQL cluster
+branding:
+  icon: git-branch
+  color: blue
+
+inputs:
+  command:
+    description: >
+      pgbranch command and its flags, e.g. "create --if-not-exists", "delete --if-exists",
+      "reset", "url", "list", "gc --ttl 7d", "template refresh".
+    required: true
+  branch:
+    description: >
+      Branch name for create / reset / delete / url.
+      Default: the PR head branch (GITHUB_HEAD_REF), else the pushed branch (GITHUB_REF_NAME).
+    required: false
+    default: ''
+  config:
+    description: Path of the config file. Default pgbranch.json in the working directory.
+    required: false
+    default: ''
+  admin-url:
+    description: >
+      Admin connection URL (a role with CREATEDB). Pass it from a secret.
+      Not needed if PGBRANCH_ADMIN_URL is set in env, or with the data-api driver.
+    required: false
+    default: ''
+
+outputs:
+  database:
+    description: Name of the branch database
+  url:
+    description: Connection URL (appUrl if set in the config). Masked in logs if it has a password.
+
+runs:
+  using: node24
+  main: action-dist/index.cjs
