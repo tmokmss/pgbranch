@@ -69,6 +69,16 @@ Decisions and open questions for pgbranch.
 - **Dependency versions**: `commander@12` (v13+ needs Node 22), `vitest@3` (v4+ needs Node 22), so
   the package runs and tests on Node 20+.
 
+- **GitHub Action runtime is `node24`**, not `node20` as the spec says. GitHub has deprecated the
+  `node20` action runtime and moves actions to Node 24, so a `node20` action would get warnings or
+  be forced to Node 24 anyway. The bundle targets Node 20 syntax, so it runs on both.
+- **Action bundle** (`action-dist/index.cjs`) is committed, because an action runs without
+  `npm install`. CI fails if it is out of date. It is CJS because `pg` is CJS.
+- **Action `branch` input** defaults to `GITHUB_HEAD_REF` (PR head branch), then `GITHUB_REF_NAME`.
+  The action always uses `--format github`.
+- **CI runs on Node 22.** Node 20 reached end of life in April 2026; the package still declares
+  `node >= 20`.
+
 ## Open questions
 
 - **[Phase 2] Data API and `CREATE DATABASE`.** Not confirmed that `ExecuteStatement` without
