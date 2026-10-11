@@ -62,8 +62,10 @@ Decisions and open questions for pgbranch.
 - **Hook env in template refresh**: `PGBRANCH_BRANCH` is empty.
 - **`--dry-run`** still runs read-only queries (to know what would happen), skips locks and hooks,
   and prints the changing SQL with a `[dry-run]` prefix.
-- **Dependency versions**: `commander@12` (v13+ needs Node 22), `vitest@3` (v4+ needs Node 22), so
-  the package runs and tests on Node 20+.
+- **Dependency versions**: `commander@12` (v13+ needs Node 22), so the package runs on Node 20+.
+  Dev tools need Node 22.12+ (`vitest@5`). We moved from `vitest@3` because its `tinypool` had
+  critical advisories. One low advisory is left in `esbuild` (dev server on Windows only, which we
+  do not use); `tsup` pins `esbuild@^0.27` and the fix is in 0.28.
 
 - **GitHub Action runtime is `node24`**, not `node20` as the spec says. GitHub has deprecated the
   `node20` action runtime and moves actions to Node 24, so a `node20` action would get warnings or

@@ -301,6 +301,8 @@ jobs:
 
 ## Development
 
+Needs Node 22.12+ (the published package itself runs on Node 20+).
+
 ```sh
 npm install
 npm test                   # unit tests
