@@ -23,7 +23,7 @@ inputs:
   admin-url:
     description: >
       Admin connection URL (a role with CREATEDB). Pass it from a secret.
-      Not needed if PGBRANCH_ADMIN_URL is set in env, or with the data-api driver.
+      Not needed if PGBRANCH_ADMIN_URL is set in env.
     required: false
     default: ''
 

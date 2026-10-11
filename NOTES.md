@@ -11,11 +11,8 @@ Decisions and open questions for pgbranch.
 
 ## Where the code lives
 
-- The working branch is on a fork of `aws-cdk`, but pgbranch is a separate project. The code lives in
-  the self-contained `pgbranch/` folder so it can be moved to its own repository as is (I was not
-  allowed to replace the branch content with an orphan history).
-- Because of this, `.github/workflows/ci.yml` and `action.yml` are inside `pgbranch/`. GitHub only
-  runs workflows from the repository root, so CI starts working once the folder is its own repo.
+- Work started by mistake in a `pgbranch/` folder on a fork of `aws-cdk`. It was moved to this
+  repository with `git subtree split`, so the history here only has pgbranch commits.
 
 ## Decisions
 
@@ -24,9 +21,8 @@ Decisions and open questions for pgbranch.
 - **Admin URL** is read only from `PGBRANCH_ADMIN_URL` or `--admin-url`, never from `pgbranch.json`,
   so the password does not end up in git.
 - **Env var names** for every config field: `PGBRANCH_PREFIX`, `PGBRANCH_MAINTENANCE_DATABASE`,
-  `PGBRANCH_STRATEGY`, `PGBRANCH_DRIVER`, `PGBRANCH_HOOKS_MIGRATE`, `PGBRANCH_HOOKS_SEED`,
-  `PGBRANCH_GC_TTL`, `PGBRANCH_APP_URL`, `PGBRANCH_RESOURCE_ARN`, `PGBRANCH_SECRET_ARN`,
-  `PGBRANCH_REGION`, `PGBRANCH_CONFIG`. Order: file < env < CLI flag.
+  `PGBRANCH_STRATEGY`, `PGBRANCH_HOOKS_MIGRATE`, `PGBRANCH_HOOKS_SEED`,
+  `PGBRANCH_GC_TTL`, `PGBRANCH_APP_URL`, `PGBRANCH_CONFIG`. Order: file < env < CLI flag.
 - **Sanitizing** also trims `_` at both ends. If nothing is left (e.g. only non-ASCII chars), the
   8-hex sha1 of the branch name is used.
 - **Name collisions** after sanitizing (`feature/foo` vs `feature-foo`): the metadata stores the
@@ -56,8 +52,8 @@ Decisions and open questions for pgbranch.
   - `pgbranch:<prefix>:template`: held for a whole `template refresh`, so two refreshes do not
     break each other's `_template_next`. `create` is not blocked by it.
   - Order is always scoped lock first, then the main lock, so no deadlock.
-  - We poll `pg_try_advisory_lock` every 500 ms (timeout 30 min) instead of a blocking call. This
-    works the same way with the Data API, where a blocking call could hit the statement timeout.
+  - We poll `pg_try_advisory_lock` every 500 ms (timeout 30 min) instead of a blocking call, so we
+    can time out with a clear message.
 - **Dump strategy**: target is created from `template0`. The source is dumped to a temp file with
   `pg_dump -Fc` and restored with `pg_restore --exit-on-error`. Because the template has
   `ALLOW_CONNECTIONS false`, the dump step turns connections on for the template while dumping (under
@@ -79,16 +75,13 @@ Decisions and open questions for pgbranch.
 - **CI runs on Node 22.** Node 20 reached end of life in April 2026; the package still declares
   `node >= 20`.
 
+- **RDS Data API support was removed** (it was Phase 2 of the spec). The Data API would let a
+  GitHub-hosted runner call create / delete without getting into the VPC. But the migrate hook and
+  the app's tests still need a normal connection to the branch DB, so the job needs VPC access
+  anyway. It also made the tool Aurora-only for that path, added the AWS SDK (most of the action
+  bundle), and had open questions (`CREATE DATABASE` through `ExecuteStatement`, keeping a lock
+  across calls). The `Driver` interface stays, because unit tests use a fake driver with it.
+
 ## Open questions
 
-- **[Phase 2] Data API and `CREATE DATABASE`.** Not confirmed that `ExecuteStatement` without
-  `transactionId` runs `CREATE DATABASE` / `DROP DATABASE` / `ALTER DATABASE` outside a transaction
-  block. The driver is written as if it does. Run `scripts/data-api-smoke.mjs` against a real cluster
-  to check (see README).
-- **[Phase 2] Data API locking.** A session-level advisory lock does not work because each
-  `ExecuteStatement` can use a different connection. The driver keeps a Data API transaction open and
-  takes `pg_try_advisory_xact_lock` in it. Needs a check on a real cluster (the smoke script does it).
-  The Data API ends a transaction after about 3 minutes without calls, and the scoped locks are held
-  while hooks run. The driver sends `select 1` in the lock transaction every 60 s to keep it open.
-  The smoke script checks that the lock survives 200 s idle.
 - Concurrent `create --if-not-exists` on the same branch: handled by the branch lock.

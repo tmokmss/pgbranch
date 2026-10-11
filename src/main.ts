@@ -36,13 +36,9 @@ async function withApp(io: Io, cmd: Command, fn: (ctx: Context) => Promise<void>
     prefix: opts.prefix,
     maintenanceDatabase: opts.maintenanceDatabase,
     strategy: opts.strategy,
-    driver: opts.driver,
     migrateHook: opts.migrateHook,
     seedHook: opts.seedHook,
     appUrl: opts.appUrl,
-    resourceArn: opts.resourceArn,
-    secretArn: opts.secretArn,
-    region: opts.region,
   };
   const config = loadConfig({ env: io.env, overrides });
   const log = makeLogger(io);
@@ -59,7 +55,7 @@ function printJson(io: Io, value: unknown): void {
   io.stdout(`${JSON.stringify(value, null, 2)}\n`);
 }
 
-function printBranch(ctx: Context, result: { database: string; url?: string; actions?: string[]; dryRun?: boolean }): void {
+function printBranch(ctx: Context, result: { database: string; url: string; actions?: string[]; dryRun?: boolean }): void {
   if (ctx.format === 'json') {
     printJson(ctx.io, result);
     return;
@@ -67,7 +63,7 @@ function printBranch(ctx: Context, result: { database: string; url?: string; act
   if (ctx.format === 'github') {
     writeGithubOutputs(ctx.io, { database: result.database, url: result.url });
   }
-  ctx.io.stdout(`${result.url ?? result.database}\n`);
+  ctx.io.stdout(`${result.url}\n`);
 }
 
 export function buildProgram(io: Io = processIo): Command {
@@ -81,13 +77,9 @@ export function buildProgram(io: Io = processIo): Command {
     .option('--prefix <prefix>', 'name prefix of managed databases')
     .option('--maintenance-database <name>', 'database the admin connection uses (default: postgres)')
     .option('--strategy <strategy>', 'copy strategy: template or dump')
-    .option('--driver <driver>', 'pg or data-api')
     .option('--app-url <url>', 'URL template for the app, with {database}')
     .option('--migrate-hook <command>', 'migrate hook command')
     .option('--seed-hook <command>', 'seed hook command')
-    .option('--resource-arn <arn>', 'Aurora cluster ARN (data-api driver)')
-    .option('--secret-arn <arn>', 'Secrets Manager secret ARN (data-api driver)')
-    .option('--region <region>', 'AWS region (data-api driver)')
     .option('--json', 'print JSON (same as --format json)')
     .option('--format <format>', 'output format: text, json or github')
     .option('--dry-run', 'print the actions, change nothing')
@@ -167,11 +159,7 @@ export function buildProgram(io: Io = processIo): Command {
     .argument('<branch>', 'branch name')
     .action(async (branch: string, _opts, cmd: Command) => {
       await withApp(io, cmd, async (ctx) => {
-        const result = await ctx.app.url(branch);
-        if (ctx.format !== 'json' && result.url === undefined) {
-          throw new Error('No URL in Data API mode. Set "appUrl" in the config to print one');
-        }
-        printBranch(ctx, result);
+        printBranch(ctx, await ctx.app.url(branch));
       });
     });
 

@@ -4,7 +4,6 @@ import type { Driver, Row, SqlParam } from './types.js';
 
 /** Driver that uses one direct `pg` connection to the maintenance database. */
 export class PgDriver implements Driver {
-  readonly kind = 'pg' as const;
   private client: pg.Client | undefined;
   private connecting: Promise<pg.Client> | undefined;
 

@@ -46,7 +46,7 @@ export interface CreateOptions {
 export interface BranchResult {
   branch: string;
   database: string;
-  url?: string;
+  url: string;
   source: string;
   created: boolean;
   migrated: boolean;
@@ -158,11 +158,10 @@ export class PgBranch {
 
   // ---------------------------------------------------------------- helpers
 
-  /** Connection URL for the app. undefined in Data API mode without appUrl. */
-  urlFor(database: string): string | undefined {
+  /** Connection URL for the app: appUrl if set, else the admin URL. */
+  urlFor(database: string): string {
     if (this.config.appUrl) return fillUrlTemplate(this.config.appUrl, database);
-    if (this.config.adminUrl) return withDatabase(this.config.adminUrl, database);
-    return undefined;
+    return withDatabase(this.config.adminUrl, database);
   }
 
   private async runHook(name: 'migrate' | 'seed', database: string, branch: string | undefined): Promise<boolean> {
@@ -177,9 +176,6 @@ export class PgBranch {
 
   private async prepareStrategy(): Promise<void> {
     if (this.config.strategy === 'dump') {
-      if (!this.config.adminUrl) {
-        throw new PgBranchError('Strategy "dump" needs a direct connection (driver "pg")');
-      }
       await checkDumpTools();
     }
   }
@@ -206,7 +202,7 @@ export class PgBranch {
     const reopen = info !== undefined && !info.allowConnections;
     if (reopen) await this.ops.setAllowConnections(source, true);
     try {
-      return await dumpDatabase(this.config.adminUrl!, source);
+      return await dumpDatabase(this.config.adminUrl, source);
     } finally {
       if (reopen) await this.ops.setAllowConnections(source, false);
     }
@@ -217,7 +213,7 @@ export class PgBranch {
     this.ops.note(`pg_restore into ${target}`);
     if (!file) return;
     try {
-      await restoreDatabase(this.config.adminUrl!, target, file);
+      await restoreDatabase(this.config.adminUrl, target, file);
     } finally {
       await file.cleanup();
     }
@@ -364,7 +360,7 @@ export class PgBranch {
     });
   }
 
-  async url(branch: string): Promise<{ branch: string; database: string; url?: string }> {
+  async url(branch: string): Promise<{ branch: string; database: string; url: string }> {
     const database = branchDbName(this.config.prefix, branch);
     const current = await this.ops.get(database);
     if (!current) {

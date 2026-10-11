@@ -91,7 +91,7 @@ All commands accept these global options (before or after the command):
 | `--json` | Print JSON (same as `--format json`) |
 | `--format text\|json\|github` | Output format. `github` writes step outputs, see below |
 | `--dry-run` | Print the SQL and actions. Change nothing |
-| `--prefix`, `--maintenance-database`, `--strategy`, `--driver`, `--app-url`, `--migrate-hook`, `--seed-hook`, `--resource-arn`, `--secret-arn`, `--region` | Override the config |
+| `--prefix`, `--maintenance-database`, `--strategy`, `--app-url`, `--migrate-hook`, `--seed-hook` | Override the config |
 
 | Command | What it does |
 | --- | --- |
@@ -121,14 +121,10 @@ by an env var or a CLI flag. Order: file < env var < flag.
 | `prefix` | `PGBRANCH_PREFIX` | (required) | Name prefix. `^[a-z][a-z0-9_]*$`, max 43 chars |
 | `maintenanceDatabase` | `PGBRANCH_MAINTENANCE_DATABASE` | `postgres` | Database the admin connection uses |
 | `strategy` | `PGBRANCH_STRATEGY` | `template` | `template` or `dump`, see below |
-| `driver` | `PGBRANCH_DRIVER` | `pg` | `pg` (direct connection) or `data-api` |
 | `hooks.migrate` | `PGBRANCH_HOOKS_MIGRATE` | none | Runs on every create, reset and template refresh |
 | `hooks.seed` | `PGBRANCH_HOOKS_SEED` | none | Runs only when the template is built from empty |
 | `gc.ttl` | `PGBRANCH_GC_TTL` | `7d` | Default TTL for `gc` |
 | `appUrl` | `PGBRANCH_APP_URL` | none | URL to print, with `{database}`. If not set, the admin URL with the database replaced is printed |
-| `dataApi.resourceArn` | `PGBRANCH_RESOURCE_ARN` | none | Aurora cluster ARN (data-api driver) |
-| `dataApi.secretArn` | `PGBRANCH_SECRET_ARN` | none | Secrets Manager secret ARN (data-api driver) |
-| `dataApi.region` | `PGBRANCH_REGION` | SDK default | AWS region (data-api driver) |
 | (env / flag only) | `PGBRANCH_ADMIN_URL` | none | Admin URL. Not read from the file, so the password stays out of git |
 
 Use `appUrl` so your app does not get the admin credentials.
@@ -144,9 +140,6 @@ there is no config file). A non-zero exit code is a failure. Env vars:
 | `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` | Same, as libpq variables |
 | `PGBRANCH_BRANCH` | Branch name (empty during `template refresh`) |
 | `PGBRANCH_DATABASE` | Target database name |
-
-In Data API mode there is no URL. The hook gets `PGBRANCH_RESOURCE_ARN`, `PGBRANCH_SECRET_ARN`,
-`PGBRANCH_DATABASE` and `PGBRANCH_BRANCH` instead.
 
 ### Strategies
 
@@ -221,9 +214,8 @@ Pick a prefix that no other database on the cluster uses.
 | `database` | Branch database name |
 | `url` | Connection URL. Masked if it has a password |
 
-The runner must reach your cluster. For Aurora in a private VPC, use a self-hosted runner in the VPC,
-or the Data API driver (then your migration tool must also work through the Data API, or the
-migrate step must run inside the VPC).
+The runner must reach your cluster, both for pgbranch and for your migrations and tests. For Aurora
+in a private VPC, use a self-hosted runner in the VPC (or another way into the VPC).
 
 ### Example workflow
 
@@ -293,26 +285,6 @@ jobs:
           command: gc --ttl 14d
 ```
 
-## Data API mode (experimental)
-
-With `"driver": "data-api"`, pgbranch talks to Aurora through the RDS Data API instead of a direct
-connection. Set `dataApi.resourceArn` / `dataApi.secretArn` (or `PGBRANCH_RESOURCE_ARN` /
-`PGBRANCH_SECRET_ARN`). AWS credentials come from the normal AWS SDK chain.
-
-- The `dump` strategy is not supported in this mode.
-- Hooks get ARNs instead of a URL (see [Hooks](#hooks)). Your migration tool must support the Data
-  API, or the job must run inside the VPC with a normal connection.
-- **Not yet tested on a real cluster.** It is not confirmed that the Data API runs
-  `CREATE DATABASE` outside a transaction. Please run the smoke test and report the result:
-
-  ```sh
-  npm run build
-  PGBRANCH_RESOURCE_ARN=... PGBRANCH_SECRET_ARN=... AWS_REGION=... node scripts/data-api-smoke.mjs
-  ```
-
-  It only creates and drops databases named `pgbranch_smoke_*`. It takes about 4 minutes because it
-  checks that a lock survives an idle period.
-
 ## Known limits
 
 - **Copies are full copies.** `CREATE DATABASE ... TEMPLATE` copies every page of the template.
@@ -326,7 +298,6 @@ connection. Set `dataApi.resourceArn` / `dataApi.secretArn` (or `PGBRANCH_RESOUR
   branch database.
 - The dump strategy needs `pg_dump` the same major version as the server or newer.
 - PostgreSQL 14+ only (`DROP DATABASE ... WITH (FORCE)` and other newer syntax).
-- Data API mode is experimental, see above.
 
 ## Development
 

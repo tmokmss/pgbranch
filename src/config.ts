@@ -7,7 +7,6 @@ import { validatePrefix } from './names.js';
 export const DEFAULT_CONFIG_FILE = 'pgbranch.json';
 
 const strategySchema = z.enum(['template', 'dump']);
-const driverSchema = z.enum(['pg', 'data-api']);
 
 /** Schema of `pgbranch.json`. */
 export const fileConfigSchema = z
@@ -15,7 +14,6 @@ export const fileConfigSchema = z
     prefix: z.string().optional(),
     maintenanceDatabase: z.string().min(1).optional(),
     strategy: strategySchema.optional(),
-    driver: driverSchema.optional(),
     hooks: z
       .object({
         migrate: z.string().optional(),
@@ -25,34 +23,21 @@ export const fileConfigSchema = z
       .optional(),
     gc: z.object({ ttl: z.string().optional() }).strict().optional(),
     appUrl: z.string().optional(),
-    dataApi: z
-      .object({
-        resourceArn: z.string().optional(),
-        secretArn: z.string().optional(),
-        region: z.string().optional(),
-      })
-      .strict()
-      .optional(),
   })
   .strict();
 
 export type FileConfig = z.infer<typeof fileConfigSchema>;
 
 export type Strategy = z.infer<typeof strategySchema>;
-export type DriverKind = z.infer<typeof driverSchema>;
 
 export interface ResolvedConfig {
   prefix: string;
   maintenanceDatabase: string;
   strategy: Strategy;
-  driver: DriverKind;
   hooks: { migrate?: string; seed?: string };
   gc: { ttl: string };
   appUrl?: string;
-  /** Only for driver "pg". */
-  adminUrl?: string;
-  /** Only for driver "data-api". */
-  dataApi?: { resourceArn: string; secretArn: string; region?: string };
+  adminUrl: string;
   /** Hooks run here. The directory of the config file, or the cwd. */
   rootDir: string;
   /** Path of the config file that was loaded, if any. */
@@ -66,14 +51,10 @@ export interface ConfigOverrides {
   prefix?: string;
   maintenanceDatabase?: string;
   strategy?: string;
-  driver?: string;
   migrateHook?: string;
   seedHook?: string;
   gcTtl?: string;
   appUrl?: string;
-  resourceArn?: string;
-  secretArn?: string;
-  region?: string;
 }
 
 /** Env var names for every field. */
@@ -83,14 +64,10 @@ export const ENV_VARS = {
   prefix: 'PGBRANCH_PREFIX',
   maintenanceDatabase: 'PGBRANCH_MAINTENANCE_DATABASE',
   strategy: 'PGBRANCH_STRATEGY',
-  driver: 'PGBRANCH_DRIVER',
   migrateHook: 'PGBRANCH_HOOKS_MIGRATE',
   seedHook: 'PGBRANCH_HOOKS_SEED',
   gcTtl: 'PGBRANCH_GC_TTL',
   appUrl: 'PGBRANCH_APP_URL',
-  resourceArn: 'PGBRANCH_RESOURCE_ARN',
-  secretArn: 'PGBRANCH_SECRET_ARN',
-  region: 'PGBRANCH_REGION',
 } as const satisfies Record<keyof ConfigOverrides, string>;
 
 export class ConfigError extends Error {
@@ -176,10 +153,6 @@ export function loadConfig(options: LoadConfigOptions = {}): ResolvedConfig {
   if (!strategy.success) {
     throw new ConfigError('"strategy" must be "template" or "dump"');
   }
-  const driver = driverSchema.safeParse(pick(cli.driver, fromEnv.driver, file.driver) ?? 'pg');
-  if (!driver.success) {
-    throw new ConfigError('"driver" must be "pg" or "data-api"');
-  }
 
   const ttl = pick(cli.gcTtl, fromEnv.gcTtl, file.gc?.ttl) ?? '7d';
   try {
@@ -193,48 +166,31 @@ export function loadConfig(options: LoadConfigOptions = {}): ResolvedConfig {
     throw new ConfigError('"appUrl" must contain the placeholder {database}');
   }
 
-  const resolved: ResolvedConfig = {
+  const adminUrl = pick(cli.adminUrl, fromEnv.adminUrl);
+  if (adminUrl === undefined) {
+    throw new ConfigError(`Admin connection URL is required (set ${ENV_VARS.adminUrl} or --admin-url)`);
+  }
+  try {
+    const u = new URL(adminUrl);
+    if (u.protocol !== 'postgres:' && u.protocol !== 'postgresql:') {
+      throw new Error(`unsupported scheme ${u.protocol}`);
+    }
+  } catch (err) {
+    throw new ConfigError(`Invalid admin URL: ${(err as Error).message}`);
+  }
+
+  return {
     prefix,
     maintenanceDatabase: pick(cli.maintenanceDatabase, fromEnv.maintenanceDatabase, file.maintenanceDatabase) ?? 'postgres',
     strategy: strategy.data,
-    driver: driver.data,
     hooks: {
       migrate: pick(cli.migrateHook, fromEnv.migrateHook, file.hooks?.migrate),
       seed: pick(cli.seedHook, fromEnv.seedHook, file.hooks?.seed),
     },
     gc: { ttl },
     appUrl,
+    adminUrl,
     rootDir: loadedPath ? dirname(loadedPath) : cwd,
     configPath: loadedPath,
   };
-
-  if (resolved.driver === 'pg') {
-    const adminUrl = pick(cli.adminUrl, fromEnv.adminUrl);
-    if (adminUrl === undefined) {
-      throw new ConfigError(`Admin connection URL is required (set ${ENV_VARS.adminUrl} or --admin-url)`);
-    }
-    try {
-      const u = new URL(adminUrl);
-      if (u.protocol !== 'postgres:' && u.protocol !== 'postgresql:') {
-        throw new Error(`unsupported scheme ${u.protocol}`);
-      }
-    } catch (err) {
-      throw new ConfigError(`Invalid admin URL: ${(err as Error).message}`);
-    }
-    resolved.adminUrl = adminUrl;
-  } else {
-    const resourceArn = pick(cli.resourceArn, fromEnv.resourceArn, file.dataApi?.resourceArn);
-    const secretArn = pick(cli.secretArn, fromEnv.secretArn, file.dataApi?.secretArn);
-    if (!resourceArn || !secretArn) {
-      throw new ConfigError(
-        `Driver "data-api" needs a resource ARN and a secret ARN (${ENV_VARS.resourceArn} / ${ENV_VARS.secretArn}, or dataApi in the config file)`,
-      );
-    }
-    resolved.dataApi = { resourceArn, secretArn, region: pick(cli.region, fromEnv.region, file.dataApi?.region) };
-    if (resolved.strategy === 'dump') {
-      throw new ConfigError('Strategy "dump" is not supported with driver "data-api" (it needs a direct connection)');
-    }
-  }
-
-  return resolved;
 }

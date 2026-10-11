@@ -4,11 +4,9 @@ export type Row = Record<string, unknown>;
 
 /**
  * A connection to the maintenance database. The core logic only uses this
- * interface, so it does not depend on `pg` or the RDS Data API directly.
+ * interface, so it does not depend on `pg` directly (and tests can use a fake).
  */
 export interface Driver {
-  readonly kind: 'pg' | 'data-api';
-
   /**
    * Run one statement on the maintenance database, outside any transaction
    * (CREATE / DROP DATABASE cannot run in a transaction).

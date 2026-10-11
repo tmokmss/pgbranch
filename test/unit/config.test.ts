@@ -22,7 +22,6 @@ describe('loadConfig', () => {
       prefix: 'app',
       maintenanceDatabase: 'postgres',
       strategy: 'template',
-      driver: 'pg',
       hooks: { migrate: 'npm run migrate', seed: undefined },
       gc: { ttl: '7d' },
       adminUrl: ADMIN,
@@ -118,30 +117,5 @@ describe('loadConfig', () => {
     expect(() =>
       loadConfig({ cwd: dirWith({ prefix: 'app', appUrl: 'postgresql://u@h/db' }), env: { PGBRANCH_ADMIN_URL: ADMIN } }),
     ).toThrow(/\{database\}/);
-  });
-
-  describe('data-api driver', () => {
-    const arns = {
-      PGBRANCH_RESOURCE_ARN: 'arn:aws:rds:us-east-1:123:cluster:c',
-      PGBRANCH_SECRET_ARN: 'arn:aws:secretsmanager:us-east-1:123:secret:s',
-    };
-
-    it('needs ARNs, not an admin URL', () => {
-      const dir = dirWith({ prefix: 'app', driver: 'data-api' });
-      expect(() => loadConfig({ cwd: dir, env: {} })).toThrow(/resource ARN/);
-      const config = loadConfig({ cwd: dir, env: arns });
-      expect(config.dataApi).toEqual({ resourceArn: arns.PGBRANCH_RESOURCE_ARN, secretArn: arns.PGBRANCH_SECRET_ARN, region: undefined });
-      expect(config.adminUrl).toBeUndefined();
-    });
-
-    it('reads ARNs from the file', () => {
-      const dir = dirWith({ prefix: 'app', driver: 'data-api', dataApi: { resourceArn: 'r', secretArn: 's', region: 'eu-west-1' } });
-      expect(loadConfig({ cwd: dir, env: {} }).dataApi).toEqual({ resourceArn: 'r', secretArn: 's', region: 'eu-west-1' });
-    });
-
-    it('rejects the dump strategy', () => {
-      const dir = dirWith({ prefix: 'app', driver: 'data-api', strategy: 'dump' });
-      expect(() => loadConfig({ cwd: dir, env: arns })).toThrow(/not supported/);
-    });
   });
 });

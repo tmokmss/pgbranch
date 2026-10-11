@@ -6,7 +6,6 @@ import { SafetyError } from '../../src/names.js';
 
 /** Records every statement. Answers pg_database lookups from a fixed set. */
 class FakeDriver implements Driver {
-  readonly kind = 'pg' as const;
   readonly statements: string[] = [];
   constructor(private readonly databases: Record<string, { isTemplate?: boolean }> = {}) {}
 

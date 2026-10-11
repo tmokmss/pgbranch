@@ -43,9 +43,9 @@ describe('hookEnv', () => {
     prefix: 'app',
     maintenanceDatabase: 'postgres',
     strategy: 'template',
-    driver: 'pg',
     hooks: {},
     gc: { ttl: '7d' },
+    adminUrl: 'postgresql://a:b@h:5432/postgres',
     rootDir: '/repo',
   };
 
@@ -63,14 +63,9 @@ describe('hookEnv', () => {
     });
   });
 
-  it('gives ARNs and no URL in Data API mode', () => {
-    const env = hookEnv({ ...base, driver: 'data-api', dataApi: { resourceArn: 'r', secretArn: 's' } }, 'app_template_next', undefined);
-    expect(env).toEqual({
-      PGBRANCH_RESOURCE_ARN: 'r',
-      PGBRANCH_SECRET_ARN: 's',
-      PGBRANCH_DATABASE: 'app_template_next',
-      PGBRANCH_BRANCH: '',
-    });
+  it('gives an empty branch during template refresh', () => {
+    const env = hookEnv(base, 'app_template_next', undefined);
+    expect(env).toMatchObject({ PGBRANCH_DATABASE: 'app_template_next', PGBRANCH_BRANCH: '', PGDATABASE: 'app_template_next' });
   });
 });
 

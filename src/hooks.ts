@@ -23,13 +23,8 @@ export function hookEnv(config: ResolvedConfig, database: string, branch: string
     PGBRANCH_DATABASE: database,
     PGBRANCH_BRANCH: branch ?? '',
   };
-  if (config.driver === 'pg' && config.adminUrl) {
-    Object.assign(env, libpqEnv(config.adminUrl, database));
-    env.DATABASE_URL = withDatabase(config.adminUrl, database);
-  } else if (config.dataApi) {
-    env.PGBRANCH_RESOURCE_ARN = config.dataApi.resourceArn;
-    env.PGBRANCH_SECRET_ARN = config.dataApi.secretArn;
-  }
+  Object.assign(env, libpqEnv(config.adminUrl, database));
+  env.DATABASE_URL = withDatabase(config.adminUrl, database);
   return env;
 }
 
@@ -42,7 +37,7 @@ export type HookRunner = (name: string, command: string, env: Record<string, str
 export const runHook: HookRunner = (name, command, env, cwd) =>
   new Promise((resolve, reject) => {
     const baseEnv = { ...process.env };
-    // Do not leak variables meant for a different mode into the hook.
+    // Do not let the parent's connection variables leak into the hook.
     for (const key of ['DATABASE_URL', 'PGHOST', 'PGPORT', 'PGUSER', 'PGPASSWORD', 'PGDATABASE', 'PGSERVICE']) {
       delete baseEnv[key];
     }

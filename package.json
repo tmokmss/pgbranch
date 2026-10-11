@@ -30,7 +30,6 @@
     "test:all": "vitest run"
   },
   "dependencies": {
-    "@aws-sdk/client-rds-data": "^3.1149.0",
     "commander": "^12.1.0",
     "pg": "^8.23.1",
     "zod": "^4.6.5"
