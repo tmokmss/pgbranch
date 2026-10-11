@@ -1,12 +1,11 @@
 import { execFileSync } from 'node:child_process';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import pg from 'pg';
 import {
   appRoleUrl,
   databases,
   dropAllWithPrefix,
   enabled,
-  ensureRole,
   makeConfig,
   sqlHook,
   superQuery,
@@ -47,7 +46,6 @@ describe.skipIf(!usable)('dump strategy', () => {
     },
   });
 
-  beforeAll(ensureRole);
   afterAll(() => dropAllWithPrefix(prefix));
 
   it('refresh, create, create --from, reset, refresh again', async () => {

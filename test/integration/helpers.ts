@@ -51,21 +51,15 @@ export const APP_ROLE = 'pgbranch_it_app';
 
 async function createRole(name: string, options: string): Promise<void> {
   const exists = await superQuery('select 1 from pg_roles where rolname = $1', [name]);
-  if (exists.length > 0) return;
-  try {
-    await superQuery(`create role ${name} ${options}`);
-  } catch (err) {
-    // Another test file created it at the same time.
-    const code = (err as { code?: string }).code;
-    if (code !== '42710' && code !== '23505') throw err;
-  }
+  if (exists.length === 0) await superQuery(`create role ${name} ${options}`);
 }
 
 /**
  * Admin role: CREATEDB + pg_signal_backend (like rds_superuser has), no superuser.
  * App role: a plain login role, used to hold connections open.
+ * Called once from global-setup.ts, so test files running in parallel do not race on it.
  */
-export async function ensureRole(): Promise<void> {
+export async function ensureRoles(): Promise<void> {
   await createRole(ROLE, `login createdb password '${ROLE_PASSWORD}'`);
   await createRole(APP_ROLE, `login password '${ROLE_PASSWORD}'`);
   await superQuery(`grant pg_signal_backend to ${ROLE}`);

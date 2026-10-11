@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { main } from '../../src/main.js';
 import type { Io } from '../../src/output.js';
-import { adminUrl, dropAllWithPrefix, enabled, ensureRole, sqlHook, uniquePrefix } from './helpers.js';
+import { adminUrl, dropAllWithPrefix, enabled, sqlHook, uniquePrefix } from './helpers.js';
 
 describe.skipIf(!enabled)('CLI', () => {
   const prefix = uniquePrefix('cli');
@@ -24,7 +24,6 @@ describe.skipIf(!enabled)('CLI', () => {
   }
 
   beforeAll(async () => {
-    await ensureRole();
     writeFileSync(
       configPath,
       JSON.stringify({

@@ -6,7 +6,6 @@ import {
   databases,
   dropAllWithPrefix,
   enabled,
-  ensureRole,
   makeConfig,
   sqlHook,
   superQuery,
@@ -25,7 +24,6 @@ describe.skipIf(!enabled)('branch lifecycle', () => {
   });
 
   beforeAll(async () => {
-    await ensureRole();
     await withApp(config, (app) => app.templateRefresh());
   });
 

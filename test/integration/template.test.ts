@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import pg from 'pg';
 import { withDatabase } from '../../src/url.js';
 import {
@@ -6,7 +6,6 @@ import {
   databases,
   dropAllWithPrefix,
   enabled,
-  ensureRole,
   makeApp,
   makeConfig,
   sqlHook,
@@ -37,7 +36,6 @@ describe.skipIf(!enabled)('template refresh', () => {
     },
   });
 
-  beforeAll(ensureRole);
   afterAll(() => dropAllWithPrefix(prefix));
 
   it('builds from empty, then updates from the old template without seeding again', async () => {

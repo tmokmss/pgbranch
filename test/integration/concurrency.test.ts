@@ -3,7 +3,6 @@ import {
   databases,
   dropAllWithPrefix,
   enabled,
-  ensureRole,
   makeApp,
   makeConfig,
   sqlHook,
@@ -18,7 +17,6 @@ describe.skipIf(!enabled)('concurrency', () => {
   });
 
   beforeAll(async () => {
-    await ensureRole();
     await withApp(config, (app) => app.templateRefresh());
   });
   afterAll(() => dropAllWithPrefix(prefix));
