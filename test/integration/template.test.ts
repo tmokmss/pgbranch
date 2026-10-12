@@ -164,6 +164,31 @@ describe.skipIf(!enabled)('template refresh from a template source', () => {
     }
   });
 
+  it('keeps owners that get CREATE on their schema by a grant', async () => {
+    // Like Aurora: the schema is owned by the admin role, the objects by a role the admin is a member of.
+    const owner = `${prefix}_owner`;
+    await superQuery(`create role ${owner}`);
+    await superQuery(`grant ${owner} to ${ROLE}`);
+    try {
+      await superQuery(`create schema app authorization ${ROLE}`, [], source);
+      await superQuery(`grant usage, create on schema app to ${owner}`, [], source);
+      await superQuery(`set role ${owner}; create type app.status as enum ('a'); create table app.things (s app.status)`, [], source);
+      await withApp(config, (app) => app.templateRefresh());
+      const { database } = await withApp(config, (app) => app.create('owners', { migrate: false }));
+      const rows = await superQuery<{ owner: string }>(
+        `select pg_get_userbyid(typowner) as owner from pg_type where typname in ('status', 'things') order by typname`,
+        [],
+        database,
+      );
+      expect(rows).toEqual([{ owner }, { owner }]);
+      await withApp(config, (app) => app.delete('owners'));
+    } finally {
+      await superQuery('drop schema if exists app cascade', [], source);
+      await withApp(config, (app) => app.templateRefresh());
+      await superQuery(`drop role ${owner}`);
+    }
+  });
+
   it('fails without touching the template when the source does not exist', async () => {
     const before = await databases(prefix);
     const missing = makeConfig(prefix, { templateSource: `missing_${prefix}` });

@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { withDatabase } from './url.js';
 
 export class ToolMissingError extends Error {
@@ -14,12 +14,13 @@ export class ToolMissingError extends Error {
   }
 }
 
-function run(tool: string, args: string[], env: Record<string, string>): Promise<void> {
+function output(tool: string, args: string[], env: Record<string, string>): Promise<string> {
   return new Promise((resolve, reject) => {
+    let stdout = '';
     let stderr = '';
-    const child = spawn(tool, args, {
-      env: { ...process.env, ...env },
-      stdio: ['ignore', 'ignore', 'pipe'],
+    const child = spawn(tool, args, { env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString();
     });
     child.stderr.on('data', (chunk: Buffer) => {
       stderr += chunk.toString();
@@ -28,10 +29,14 @@ function run(tool: string, args: string[], env: Record<string, string>): Promise
       reject(err.code === 'ENOENT' ? new ToolMissingError(tool) : err);
     });
     child.on('exit', (code) => {
-      if (code === 0) resolve();
+      if (code === 0) resolve(stdout);
       else reject(new Error(`${tool} failed with exit code ${code}${stderr ? `:\n${stderr.trim()}` : ''}`));
     });
   });
+}
+
+async function run(tool: string, args: string[], env: Record<string, string>): Promise<void> {
+  await output(tool, args, env);
 }
 
 /** Check that pg_dump and pg_restore can be started. */
@@ -72,7 +77,24 @@ export async function dumpDatabase(adminUrl: string, database: string): Promise<
   return { path, cleanup };
 }
 
+/** Matches table-of-contents lines of `pg_restore --list` for schemas and their grants. */
+const SCHEMA_ENTRY = /^\d+; \d+ \d+ (SCHEMA|ACL - SCHEMA) /;
+
+/**
+ * Restore in two passes: schemas and their grants first, then the rest.
+ * pg_restore applies grants after all other objects. A non-superuser can only give an object to a
+ * role that has CREATE on its schema, so in one pass `ALTER ... OWNER TO` fails when the owner gets
+ * CREATE on the schema by a grant.
+ */
 export async function restoreDatabase(adminUrl: string, database: string, file: DumpFile): Promise<void> {
   const { dbname, env } = connection(adminUrl, database);
-  await run('pg_restore', ['--exit-on-error', `--dbname=${dbname}`, file.path], env);
+  const entries = (await output('pg_restore', ['--list', file.path], env)).split('\n').filter((line) => /^\d+;/.test(line));
+  const schemas = entries.filter((line) => SCHEMA_ENTRY.test(line));
+  const rest = entries.filter((line) => !SCHEMA_ENTRY.test(line));
+  for (const [name, lines] of [['schemas', schemas], ['objects', rest]] as const) {
+    if (lines.length === 0) continue;
+    const list = join(dirname(file.path), `${name}.list`);
+    await writeFile(list, `${lines.join('\n')}\n`);
+    await run('pg_restore', ['--exit-on-error', `--use-list=${list}`, `--dbname=${dbname}`, file.path], env);
+  }
 }
