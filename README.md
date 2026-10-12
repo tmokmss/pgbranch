@@ -65,6 +65,42 @@ npx pgbranch gc                        # drop branch databases older than gc.ttl
   migrations of the branch on top of `main`. If the hook fails, the new database is dropped.
 - Metadata (branch name, created time, source) is stored as JSON in `COMMENT ON DATABASE`. No extra
   tables.
+
+### Copy a live database instead of the template
+
+Set `source` to copy a database that is in use (for example a shared dev database) on every
+`create`, with no template to keep up to date. `template refresh` is not used then. `source` is only
+read: pgbranch does not end its connections or change its settings.
+
+`create` then:
+
+1. Creates the schemas, tables, types and functions of `source` (`pg_dump --section=pre-data`), with
+   no indexes and no constraints. Schemas and their grants go first, so owners are kept even when the
+   admin role is not a superuser.
+2. Copies the rows with `COPY ... TO STDOUT` / `COPY ... FROM STDIN`, four tables at a time, with
+   no file in between. `data` can leave out a table or copy only the rows that match a condition.
+3. Sets each sequence to its value in `source`.
+4. Deletes the rows whose parent row was not copied, following the foreign keys of `source`, until
+   no foreign key has a missing parent. Only foreign keys whose parent table lost rows are checked.
+5. Creates the indexes, constraints, row security policies and the rest
+   (`pg_dump --section=post-data`).
+6. Runs `migrate`.
+
+```json
+{
+  "prefix": "myapp",
+  "source": "myapp_dev",
+  "data": {
+    "public.audit_logs": false,
+    "public.orders": "created_at > now() - interval '30 days'"
+  },
+  "hooks": { "migrate": "npx prisma migrate deploy" }
+}
+```
+
+Here `audit_logs` is created empty, `orders` gets the last 30 days, and the rows of other tables that
+point to an order (or an audit log) that was not copied are deleted. All other tables are copied in
+full. The time of a copy grows with the rows copied, so leave out large tables you do not need.
 - Postgres advisory locks keep parallel CI jobs safe. Two jobs on the same branch run one after the
   other. Jobs on different branches only wait for each other during the short create / rename /
   drop steps.
@@ -121,6 +157,8 @@ by an env var or a CLI flag. Order: file < env var < flag.
 | `prefix` | `PGBRANCH_PREFIX` | (required) | Name prefix. `^[a-z][a-z0-9_]*$`, max 43 chars |
 | `maintenanceDatabase` | `PGBRANCH_MAINTENANCE_DATABASE` | `postgres` | Database the admin connection uses |
 | `strategy` | `PGBRANCH_STRATEGY` | `template` | `template` or `dump`, see below |
+| `source` | `PGBRANCH_SOURCE` | none | Live database that `create` copies, instead of the template. Must not start with `<prefix>_` |
+| `data` | (file only) | none | Rows to copy from `source`, per `"schema.table"`: `false` for none, or a SQL condition for a `WHERE` clause. Needs `source` |
 | `hooks.migrate` | `PGBRANCH_HOOKS_MIGRATE` | none | Runs on every create, reset and template refresh |
 | `hooks.seed` | `PGBRANCH_HOOKS_SEED` | none | Runs only when the template is built from empty |
 | `gc.ttl` | `PGBRANCH_GC_TTL` | `7d` | Default TTL for `gc` |
@@ -147,8 +185,9 @@ there is no config file). A non-zero exit code is a failure. Env vars:
   over the network.
 - `dump`: `pg_dump -Fc` to a temp file, then `pg_restore` into a new database. Slower, but works when
   template cloning is not possible, and `create --from` does not need to terminate connections to the
-  source branch. Needs `pg_dump` and `pg_restore` in `PATH`, the same major version as the server or
-  newer. While the template is being dumped, connections to it are allowed for a short time.
+  source branch. Needs `pg_dump` and `pg_restore` in `PATH`, the same major version as the server
+  (a newer `pg_dump` writes settings an older server does not know, such as `transaction_timeout`,
+  and the restore fails). While the template is being dumped, connections to it are allowed for a short time.
 
 ## Required privileges
 
@@ -160,6 +199,10 @@ The admin role needs:
   normal branch database as a source with `create --from`.
 - To end sessions of other roles (for `delete`, `reset`, `gc`, `create --from` while your app is
   connected): membership in `pg_signal_backend`. On Aurora / RDS, `rds_superuser` already has it.
+- With `source`: to read every table of `source` without row security, and to give the copied
+  objects to their owners. Membership in the roles that own the tables does both (the owner is not
+  subject to row security, and a member can give objects to it). `BYPASSRLS` plus `SELECT` also works
+  for reading.
 
 ```sql
 CREATE ROLE pgbranch_admin LOGIN CREATEDB PASSWORD '...';
@@ -296,7 +339,10 @@ jobs:
 - **Hooks get admin credentials.** Use `appUrl` for your app.
 - `create --from <branch>` with the `template` strategy terminates the connections to the source
   branch database.
-- The dump strategy needs `pg_dump` the same major version as the server or newer.
+- The dump strategy and `source` need `pg_dump`, `pg_restore` and `psql` the same major version as
+  the server.
+- With `source`, large objects are not copied, and rows are only deleted along foreign keys between
+  plain tables (not partitioned tables).
 - PostgreSQL 14+ only (`DROP DATABASE ... WITH (FORCE)` and other newer syntax).
 
 ## Development

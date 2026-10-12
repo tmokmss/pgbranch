@@ -89,6 +89,23 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ cwd: dirWith(content), env: { PGBRANCH_ADMIN_URL: ADMIN } })).toThrow(pattern);
   });
 
+  it('reads source and data', () => {
+    const config = loadConfig({
+      cwd: dirWith({ prefix: 'app', data: { 'public.logs': false, 'public.runs': 'id > 10' } }),
+      env: { PGBRANCH_ADMIN_URL: ADMIN, PGBRANCH_SOURCE: 'appdb' },
+    });
+    expect(config).toMatchObject({ source: 'appdb', data: { 'public.logs': false, 'public.runs': 'id > 10' } });
+  });
+
+  it.each([
+    ['data without source', { prefix: 'app', data: { 'public.logs': false } }, /needs "source"/],
+    ['a managed source', { prefix: 'app', source: 'app_template' }, /must not be a database pgbranch manages/],
+    ['a data key without schema', { prefix: 'app', source: 'appdb', data: { logs: false } }, /schema\.table/],
+    ['true as a data rule', { prefix: 'app', source: 'appdb', data: { 'public.logs': true } }, /data/],
+  ])('rejects %s', (_name, content, pattern) => {
+    expect(() => loadConfig({ cwd: dirWith(content), env: { PGBRANCH_ADMIN_URL: ADMIN } })).toThrow(pattern);
+  });
+
   it('requires a prefix', () => {
     expect(() => loadConfig({ cwd: dirWith({}), env: { PGBRANCH_ADMIN_URL: ADMIN } })).toThrow(/prefix/);
   });

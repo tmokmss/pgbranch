@@ -43,6 +43,7 @@ describe('hookEnv', () => {
     prefix: 'app',
     maintenanceDatabase: 'postgres',
     strategy: 'template',
+    data: {},
     hooks: {},
     gc: { ttl: '7d' },
     adminUrl: 'postgresql://a:b@h:5432/postgres',
