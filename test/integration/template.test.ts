@@ -2,9 +2,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import pg from 'pg';
 import { withDatabase } from '../../src/url.js';
 import {
-  APP_ROLE,
   appRoleUrl,
-  ROLE,
   databases,
   dropAllWithPrefix,
   enabled,
@@ -115,86 +113,5 @@ describe.skipIf(!enabled)('template refresh', () => {
       await b.close();
     }
     expect(await databases(prefix)).toEqual([`${prefix}_template`]);
-  });
-});
-
-describe.skipIf(!enabled)('template refresh from a template source', () => {
-  const prefix = uniquePrefix('tsrc');
-  // Not managed by pgbranch: it does not start with `${prefix}_`.
-  const source = `src_${prefix}`;
-  const config = makeConfig(prefix, {
-    templateSource: source,
-    hooks: { migrate: sqlHook('alter table items add column if not exists v2 int'), seed: sqlHook('insert into items values (99)') },
-  });
-
-  afterAll(async () => {
-    await dropAllWithPrefix(prefix);
-    await superQuery(`drop database if exists "${source}" with (force)`);
-  });
-
-  it('dumps the source into the template, runs migrate, and leaves the source as it was', async () => {
-    await superQuery(`create database "${source}" owner pgbranch_it`);
-    await superQuery('create table items (id int)', [], source);
-    await superQuery('insert into items values (1)', [], source);
-    await superQuery(`alter table items owner to ${ROLE}`, [], source);
-    await superQuery(`grant select on items to ${APP_ROLE}`, [], source);
-    const holder = new pg.Client({ connectionString: appRoleUrl(source) });
-    await holder.connect();
-    try {
-      const first = await withApp(config, (app) => app.templateRefresh());
-      expect(first).toMatchObject({ fromEmpty: false, migrated: true, seeded: false });
-
-      await superQuery('insert into items values (2)', [], source);
-      await withApp(config, (app) => app.templateRefresh());
-      expect(await databases(prefix)).toEqual([`${prefix}_template`]);
-
-      const { database } = await withApp(config, (app) => app.create('check', { migrate: false }));
-      expect(await columns(database)).toEqual(['id', 'v2']);
-      expect(await superQuery('select id from items order by id', [], database)).toEqual([{ id: 1 }, { id: 2 }]);
-
-      expect(await holder.query('select id from items order by id')).toMatchObject({ rows: [{ id: 1 }, { id: 2 }] });
-      expect(await columns(source)).toEqual(['id']);
-      const rows = await superQuery<{ datistemplate: boolean; datallowconn: boolean }>(
-        'select datistemplate, datallowconn from pg_database where datname = $1',
-        [source],
-      );
-      expect(rows).toEqual([{ datistemplate: false, datallowconn: true }]);
-    } finally {
-      await holder.end();
-    }
-  });
-
-  it('keeps owners that get CREATE on their schema by a grant', async () => {
-    // Like Aurora: the schema is owned by the admin role, the objects by a role the admin is a member of.
-    const owner = `${prefix}_owner`;
-    await superQuery(`create role ${owner}`);
-    await superQuery(`grant ${owner} to ${ROLE}`);
-    try {
-      await superQuery(`create schema app authorization ${ROLE}`, [], source);
-      await superQuery(`grant usage, create on schema app to ${owner}`, [], source);
-      await superQuery(`set role ${owner}; create type app.status as enum ('a'); create table app.things (s app.status)`, [], source);
-      await withApp(config, (app) => app.templateRefresh());
-      const { database } = await withApp(config, (app) => app.create('owners', { migrate: false }));
-      const rows = await superQuery<{ owner: string }>(
-        `select pg_get_userbyid(typowner) as owner from pg_type where typname in ('status', 'things') order by typname`,
-        [],
-        database,
-      );
-      expect(rows).toEqual([{ owner }, { owner }]);
-      await withApp(config, (app) => app.delete('owners'));
-    } finally {
-      await superQuery('drop schema if exists app cascade', [], source);
-      await withApp(config, (app) => app.templateRefresh());
-      await superQuery(`drop role ${owner}`);
-    }
-  });
-
-  it('fails without touching the template when the source does not exist', async () => {
-    const before = await databases(prefix);
-    const missing = makeConfig(prefix, { templateSource: `missing_${prefix}` });
-    await withApp(missing, async (app) => {
-      await expect(app.templateRefresh()).rejects.toThrow(/does not exist/);
-    });
-    expect(await databases(prefix)).toEqual(before);
   });
 });

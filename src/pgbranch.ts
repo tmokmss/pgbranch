@@ -1,5 +1,7 @@
 import type { ResolvedConfig } from './config.js';
+import { copyDatabase, type ConnectTo } from './copy.js';
 import { DbOps, type Logger, silentLogger } from './db-ops.js';
+import { PgDriver } from './driver/pg.js';
 import type { Driver } from './driver/types.js';
 import { parseDuration } from './duration.js';
 import { checkDumpTools, dumpDatabase, restoreDatabase, type DumpFile } from './dump.js';
@@ -7,6 +9,7 @@ import { hookEnv, runHook, type HookRunner } from './hooks.js';
 import {
   branchSource,
   buildMetadata,
+  databaseSource,
   parseMetadata,
   parseSource,
   TEMPLATE_SOURCE,
@@ -32,6 +35,8 @@ export interface PgBranchOptions {
   lockTimeoutMs?: number;
   /** For tests. */
   now?: () => Date;
+  /** Opens a connection to another database of the cluster. Defaults to a `pg` connection with the admin URL. */
+  connectTo?: ConnectTo;
 }
 
 export interface CreateOptions {
@@ -104,6 +109,7 @@ export class PgBranch {
   private readonly hookRunner: HookRunner;
   private readonly lockTimeoutMs: number;
   private readonly now: () => Date;
+  private readonly connectTo: ConnectTo;
 
   constructor(options: PgBranchOptions) {
     this.config = options.config;
@@ -112,6 +118,7 @@ export class PgBranch {
     this.hookRunner = options.hookRunner ?? runHook;
     this.lockTimeoutMs = options.lockTimeoutMs ?? 30 * 60 * 1000;
     this.now = options.now ?? (() => new Date());
+    this.connectTo = options.connectTo ?? ((database) => new PgDriver(options.config.adminUrl, database));
   }
 
   get dryRun(): boolean {
@@ -175,7 +182,7 @@ export class PgBranch {
   }
 
   private async prepareStrategy(): Promise<void> {
-    if (this.config.strategy === 'dump' || this.config.templateSource !== undefined) {
+    if (this.config.strategy === 'dump' || this.config.source !== undefined) {
       await checkDumpTools();
     }
   }
@@ -219,17 +226,18 @@ export class PgBranch {
     }
   }
 
-  /** Dump `source` and restore it into `target`. `source` is only read, never changed. */
+  /** Copy the live database `source` into the empty database `target`. `source` is only read. */
   private async copyFromSource(source: string, target: string): Promise<void> {
-    this.ops.note(`pg_dump ${source}`);
-    this.ops.note(`pg_restore into ${target}`);
+    this.ops.note(`copy ${source} into ${target}`);
     if (this.dryRun) return;
-    const file = await dumpDatabase(this.config.adminUrl, source);
-    try {
-      await restoreDatabase(this.config.adminUrl, target, file);
-    } finally {
-      await file.cleanup();
-    }
+    await copyDatabase({
+      adminUrl: this.config.adminUrl,
+      source,
+      target,
+      rules: this.config.data,
+      connectTo: this.connectTo,
+      log: this.log,
+    });
   }
 
   private async dropAfterFailure(database: string): Promise<void> {
@@ -258,8 +266,11 @@ export class PgBranch {
   }
 
   private async createLocked(branch: string, database: string, options: CreateOptions): Promise<BranchResult> {
-    const source = options.from !== undefined ? branchSource(options.from) : TEMPLATE_SOURCE;
-    const sourceDb = options.from !== undefined ? branchDbName(this.config.prefix, options.from) : templateName(this.config.prefix);
+    const fromDatabase = options.from === undefined ? this.config.source : undefined;
+    const source =
+      options.from !== undefined ? branchSource(options.from) : fromDatabase !== undefined ? databaseSource(fromDatabase) : TEMPLATE_SOURCE;
+    const sourceDb =
+      options.from !== undefined ? branchDbName(this.config.prefix, options.from) : (fromDatabase ?? templateName(this.config.prefix));
     if (sourceDb === database) {
       throw new PgBranchError('A branch cannot be created from itself');
     }
@@ -282,10 +293,13 @@ export class PgBranch {
         throw new PgBranchError(
           options.from !== undefined
             ? `Source branch "${options.from}" has no database (${sourceDb})`
-            : `Template database ${sourceDb} does not exist. Run "pgbranch template refresh" first`,
+            : fromDatabase !== undefined
+              ? `Source database ${sourceDb} does not exist`
+              : `Template database ${sourceDb} does not exist. Run "pgbranch template refresh" first`,
         );
       }
-      dump = await this.startCopy(sourceDb, database, options.from !== undefined);
+      if (fromDatabase !== undefined) await this.ops.create(database, { baseTemplate: 'template0' });
+      else dump = await this.startCopy(sourceDb, database, options.from !== undefined);
       await this.ops.setComment(database, buildMetadata(branch, source, this.now()));
     });
 
@@ -296,7 +310,8 @@ export class PgBranch {
       if (doMigrate) migrated = await this.runHook('migrate', database, branch);
     } else {
       try {
-        await this.finishCopy(dump, database);
+        if (fromDatabase !== undefined) await this.copyFromSource(fromDatabase, database);
+        else await this.finishCopy(dump, database);
         if (doMigrate) migrated = await this.runHook('migrate', database, branch);
       } catch (err) {
         if (!this.dryRun) {
@@ -328,8 +343,15 @@ export class PgBranch {
       }
       const meta = this.checkOwner(database, current.comment, branch);
       const source = parseSource(meta?.source ?? TEMPLATE_SOURCE);
+      if (source.kind === 'database' && source.database !== this.config.source) {
+        throw new PgBranchError(`${database} was copied from ${source.database}, but "source" is ${this.config.source ?? 'not set'}`);
+      }
+      if (source.kind === 'template' && this.config.source !== undefined) {
+        throw new PgBranchError(`${database} was copied from the template, but "source" is set`);
+      }
       const from = source.kind === 'branch' ? source.branch : undefined;
-      const sourceDb = from !== undefined ? branchDbName(this.config.prefix, from) : templateName(this.config.prefix);
+      const sourceDb =
+        source.kind === 'branch' ? branchDbName(this.config.prefix, source.branch) : source.kind === 'database' ? source.database : templateName(this.config.prefix);
       if (!(await this.ops.exists(sourceDb))) {
         throw new PgBranchError(`Source database ${sourceDb} does not exist, so ${database} was not reset`);
       }
@@ -427,12 +449,15 @@ export class PgBranch {
     const tmpl = templateName(this.config.prefix);
     const next = templateNextName(this.config.prefix);
     const old = templateOldName(this.config.prefix);
-    const source = this.config.templateSource;
+
+    if (this.config.source !== undefined) {
+      throw new PgBranchError(`"source" is set, so create copies ${this.config.source} and there is no template to refresh`);
+    }
 
     return this.withLock(async () => {
       await this.prepareStrategy();
 
-      // 1. Build _next: empty to restore templateSource into, a copy of the current template, or empty.
+      // 1. Build _next from the current template, or empty.
       let fromEmpty = false;
       let dump: DumpFile | undefined;
       await this.withLock(async () => {
@@ -445,12 +470,7 @@ export class PgBranch {
         if (await this.ops.drop(next)) this.log.warn(`Dropped leftover ${next}`);
         if (await this.ops.drop(old)) this.log.warn(`Dropped leftover ${old}`);
 
-        if (source !== undefined) {
-          if (!(await this.ops.exists(source))) {
-            throw new PgBranchError(`Template source database ${source} does not exist`);
-          }
-          await this.ops.create(next, { baseTemplate: 'template0' });
-        } else if (await this.ops.exists(tmpl)) {
+        if (await this.ops.exists(tmpl)) {
           dump = await this.startCopy(tmpl, next, false);
         } else {
           fromEmpty = true;
@@ -462,8 +482,7 @@ export class PgBranch {
       let migrated = false;
       let seeded = false;
       try {
-        if (source !== undefined) await this.copyFromSource(source, next);
-        else await this.finishCopy(dump, next);
+        await this.finishCopy(dump, next);
         migrated = await this.runHook('migrate', next, undefined);
         if (fromEmpty) seeded = await this.runHook('seed', next, undefined);
       } catch (err) {

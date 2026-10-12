@@ -102,6 +102,7 @@ export function makeConfig(prefix: string, extra: Partial<ResolvedConfig> = {}):
     prefix,
     maintenanceDatabase: 'postgres',
     strategy: 'template',
+    data: {},
     hooks: {},
     gc: { ttl: '7d' },
     adminUrl: adminUrl(),

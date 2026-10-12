@@ -1,6 +1,6 @@
 /**
  * Metadata stored as JSON in `COMMENT ON DATABASE`.
- * `source` is "template" or "branch:<branch name>".
+ * `source` is "template", "branch:<branch name>" or "database:<database name>".
  */
 export interface BranchMetadata {
   pgbranch: 1;
@@ -15,13 +15,21 @@ export function branchSource(branch: string): string {
   return `branch:${branch}`;
 }
 
-/** Returns the source branch name, or undefined if the source is the template. */
-export function parseSource(source: string): { kind: 'template' } | { kind: 'branch'; branch: string } {
+export function databaseSource(database: string): string {
+  return `database:${database}`;
+}
+
+export function parseSource(
+  source: string,
+): { kind: 'template' } | { kind: 'branch'; branch: string } | { kind: 'database'; database: string } {
   if (source === TEMPLATE_SOURCE) {
     return { kind: 'template' };
   }
   if (source.startsWith('branch:') && source.length > 'branch:'.length) {
     return { kind: 'branch', branch: source.slice('branch:'.length) };
+  }
+  if (source.startsWith('database:') && source.length > 'database:'.length) {
+    return { kind: 'database', database: source.slice('database:'.length) };
   }
   throw new Error(`Unknown source in metadata: ${JSON.stringify(source)}`);
 }

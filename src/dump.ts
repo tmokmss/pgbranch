@@ -49,7 +49,7 @@ export async function checkDumpTools(): Promise<void> {
  * Connection args without the password in argv (so it does not show in `ps`).
  * The password goes in PGPASSWORD.
  */
-function connection(adminUrl: string, database: string): { dbname: string; env: Record<string, string> } {
+export function connection(adminUrl: string, database: string): { dbname: string; env: Record<string, string> } {
   const u = new URL(withDatabase(adminUrl, database));
   const password = decodeURIComponent(u.password);
   u.password = '';
@@ -63,13 +63,22 @@ export interface DumpFile {
   cleanup(): Promise<void>;
 }
 
-export async function dumpDatabase(adminUrl: string, database: string): Promise<DumpFile> {
+export function dumpDatabase(adminUrl: string, database: string): Promise<DumpFile> {
+  return dump(adminUrl, database, []);
+}
+
+/** Dump the definitions only, no table data. */
+export function dumpSchema(adminUrl: string, database: string): Promise<DumpFile> {
+  return dump(adminUrl, database, ['--schema-only']);
+}
+
+async function dump(adminUrl: string, database: string, args: string[]): Promise<DumpFile> {
   const dir = await mkdtemp(join(tmpdir(), 'pgbranch-'));
   const path = join(dir, 'dump.pgc');
   const cleanup = () => rm(dir, { recursive: true, force: true });
   const { dbname, env } = connection(adminUrl, database);
   try {
-    await run('pg_dump', ['--format=custom', `--file=${path}`, `--dbname=${dbname}`], env);
+    await run('pg_dump', ['--format=custom', ...args, `--file=${path}`, `--dbname=${dbname}`], env);
   } catch (err) {
     await cleanup();
     throw err;
@@ -80,6 +89,24 @@ export async function dumpDatabase(adminUrl: string, database: string): Promise<
 /** Matches table-of-contents lines of `pg_restore --list` for schemas and their grants. */
 const SCHEMA_ENTRY = /^\d+; \d+ \d+ (SCHEMA|ACL - SCHEMA) /;
 
+/** Table-of-contents lines of the dump, narrowed by pg_restore selection flags such as `--section`. */
+export async function tocEntries(file: DumpFile, args: string[]): Promise<string[]> {
+  return (await output('pg_restore', ['--list', ...args, file.path], {})).split('\n').filter((line) => /^\d+;/.test(line));
+}
+
+export function schemaEntries(entries: string[]): string[] {
+  return entries.filter((line) => SCHEMA_ENTRY.test(line));
+}
+
+/** Restore only the given table-of-contents lines, in one pg_restore run. */
+export async function restoreList(adminUrl: string, database: string, file: DumpFile, name: string, entries: string[]): Promise<void> {
+  if (entries.length === 0) return;
+  const { dbname, env } = connection(adminUrl, database);
+  const list = join(dirname(file.path), `${name}.list`);
+  await writeFile(list, `${entries.join('\n')}\n`);
+  await run('pg_restore', ['--exit-on-error', `--use-list=${list}`, `--dbname=${dbname}`, file.path], env);
+}
+
 /**
  * Restore in two passes: schemas and their grants first, then the rest.
  * pg_restore applies grants after all other objects. A non-superuser can only give an object to a
@@ -87,14 +114,8 @@ const SCHEMA_ENTRY = /^\d+; \d+ \d+ (SCHEMA|ACL - SCHEMA) /;
  * CREATE on the schema by a grant.
  */
 export async function restoreDatabase(adminUrl: string, database: string, file: DumpFile): Promise<void> {
-  const { dbname, env } = connection(adminUrl, database);
-  const entries = (await output('pg_restore', ['--list', file.path], env)).split('\n').filter((line) => /^\d+;/.test(line));
-  const schemas = entries.filter((line) => SCHEMA_ENTRY.test(line));
-  const rest = entries.filter((line) => !SCHEMA_ENTRY.test(line));
-  for (const [name, lines] of [['schemas', schemas], ['objects', rest]] as const) {
-    if (lines.length === 0) continue;
-    const list = join(dirname(file.path), `${name}.list`);
-    await writeFile(list, `${lines.join('\n')}\n`);
-    await run('pg_restore', ['--exit-on-error', `--use-list=${list}`, `--dbname=${dbname}`, file.path], env);
-  }
+  const entries = await tocEntries(file, []);
+  const schemas = schemaEntries(entries);
+  await restoreList(adminUrl, database, file, 'schemas', schemas);
+  await restoreList(adminUrl, database, file, 'objects', entries.filter((line) => !schemas.includes(line)));
 }
