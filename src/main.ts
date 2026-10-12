@@ -36,6 +36,7 @@ async function withApp(io: Io, cmd: Command, fn: (ctx: Context) => Promise<void>
     prefix: opts.prefix,
     maintenanceDatabase: opts.maintenanceDatabase,
     strategy: opts.strategy,
+    templateSource: opts.templateSource,
     migrateHook: opts.migrateHook,
     seedHook: opts.seedHook,
     appUrl: opts.appUrl,
@@ -77,6 +78,7 @@ export function buildProgram(io: Io = processIo): Command {
     .option('--prefix <prefix>', 'name prefix of managed databases')
     .option('--maintenance-database <name>', 'database the admin connection uses (default: postgres)')
     .option('--strategy <strategy>', 'copy strategy: template or dump')
+    .option('--template-source <database>', 'database that template refresh dumps the template from')
     .option('--app-url <url>', 'URL template for the app, with {database}')
     .option('--migrate-hook <command>', 'migrate hook command')
     .option('--seed-hook <command>', 'seed hook command')

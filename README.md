@@ -61,6 +61,11 @@ npx pgbranch gc                        # drop branch databases older than gc.ttl
 - `template refresh` builds `<prefix>_template_next` (a copy of the current template, or empty the
   first time), runs `migrate` (and `seed` the first time) on it, then swaps it in. If the hook fails,
   the new copy is dropped and the old template stays as it was.
+- With `templateSource`, `template refresh` instead dumps that database into an empty
+  `<prefix>_template_next` every time, then runs `migrate` (not `seed`) and swaps it in. Use it to
+  keep the template at a copy of a shared database such as a dev database. The source is only read
+  with `pg_dump`. Its connections are not terminated, and it can be in use. While it is being dumped,
+  `ALTER TABLE` and other DDL on it wait.
 - `create` copies the template, then runs `migrate` on the new database. This applies the new
   migrations of the branch on top of `main`. If the hook fails, the new database is dropped.
 - Metadata (branch name, created time, source) is stored as JSON in `COMMENT ON DATABASE`. No extra
@@ -121,6 +126,7 @@ by an env var or a CLI flag. Order: file < env var < flag.
 | `prefix` | `PGBRANCH_PREFIX` | (required) | Name prefix. `^[a-z][a-z0-9_]*$`, max 43 chars |
 | `maintenanceDatabase` | `PGBRANCH_MAINTENANCE_DATABASE` | `postgres` | Database the admin connection uses |
 | `strategy` | `PGBRANCH_STRATEGY` | `template` | `template` or `dump`, see below |
+| `templateSource` | `PGBRANCH_TEMPLATE_SOURCE` | none | Database to dump the template from on every `template refresh`. Must not start with `<prefix>_`. Always uses `pg_dump`, whatever the strategy |
 | `hooks.migrate` | `PGBRANCH_HOOKS_MIGRATE` | none | Runs on every create, reset and template refresh |
 | `hooks.seed` | `PGBRANCH_HOOKS_SEED` | none | Runs only when the template is built from empty |
 | `gc.ttl` | `PGBRANCH_GC_TTL` | `7d` | Default TTL for `gc` |
@@ -147,8 +153,9 @@ there is no config file). A non-zero exit code is a failure. Env vars:
   over the network.
 - `dump`: `pg_dump -Fc` to a temp file, then `pg_restore` into a new database. Slower, but works when
   template cloning is not possible, and `create --from` does not need to terminate connections to the
-  source branch. Needs `pg_dump` and `pg_restore` in `PATH`, the same major version as the server or
-  newer. While the template is being dumped, connections to it are allowed for a short time.
+  source branch. Needs `pg_dump` and `pg_restore` in `PATH`, the same major version as the server
+  (a newer `pg_dump` writes settings an older server does not know, such as `transaction_timeout`,
+  and the restore fails). While the template is being dumped, connections to it are allowed for a short time.
 
 ## Required privileges
 
@@ -296,7 +303,8 @@ jobs:
 - **Hooks get admin credentials.** Use `appUrl` for your app.
 - `create --from <branch>` with the `template` strategy terminates the connections to the source
   branch database.
-- The dump strategy needs `pg_dump` the same major version as the server or newer.
+- The dump strategy and `templateSource` need `pg_dump` and `pg_restore` the same major version as
+  the server.
 - PostgreSQL 14+ only (`DROP DATABASE ... WITH (FORCE)` and other newer syntax).
 
 ## Development

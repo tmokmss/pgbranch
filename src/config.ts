@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { z } from 'zod';
 import { parseDuration } from './duration.js';
-import { validatePrefix } from './names.js';
+import { isManaged, validatePrefix } from './names.js';
 
 export const DEFAULT_CONFIG_FILE = 'pgbranch.json';
 
@@ -14,6 +14,7 @@ export const fileConfigSchema = z
     prefix: z.string().optional(),
     maintenanceDatabase: z.string().min(1).optional(),
     strategy: strategySchema.optional(),
+    templateSource: z.string().min(1).optional(),
     hooks: z
       .object({
         migrate: z.string().optional(),
@@ -34,6 +35,8 @@ export interface ResolvedConfig {
   prefix: string;
   maintenanceDatabase: string;
   strategy: Strategy;
+  /** Database that `template refresh` dumps the template from. It is only read. */
+  templateSource?: string;
   hooks: { migrate?: string; seed?: string };
   gc: { ttl: string };
   appUrl?: string;
@@ -51,6 +54,7 @@ export interface ConfigOverrides {
   prefix?: string;
   maintenanceDatabase?: string;
   strategy?: string;
+  templateSource?: string;
   migrateHook?: string;
   seedHook?: string;
   gcTtl?: string;
@@ -64,6 +68,7 @@ export const ENV_VARS = {
   prefix: 'PGBRANCH_PREFIX',
   maintenanceDatabase: 'PGBRANCH_MAINTENANCE_DATABASE',
   strategy: 'PGBRANCH_STRATEGY',
+  templateSource: 'PGBRANCH_TEMPLATE_SOURCE',
   migrateHook: 'PGBRANCH_HOOKS_MIGRATE',
   seedHook: 'PGBRANCH_HOOKS_SEED',
   gcTtl: 'PGBRANCH_GC_TTL',
@@ -161,6 +166,11 @@ export function loadConfig(options: LoadConfigOptions = {}): ResolvedConfig {
     throw new ConfigError(`gc.ttl: ${(err as Error).message}`);
   }
 
+  const templateSource = pick(cli.templateSource, fromEnv.templateSource, file.templateSource);
+  if (templateSource !== undefined && isManaged(prefix, templateSource)) {
+    throw new ConfigError(`"templateSource" must not be a database pgbranch manages (${templateSource})`);
+  }
+
   const appUrl = pick(cli.appUrl, fromEnv.appUrl, file.appUrl);
   if (appUrl !== undefined && !appUrl.includes('{database}')) {
     throw new ConfigError('"appUrl" must contain the placeholder {database}');
@@ -183,6 +193,7 @@ export function loadConfig(options: LoadConfigOptions = {}): ResolvedConfig {
     prefix,
     maintenanceDatabase: pick(cli.maintenanceDatabase, fromEnv.maintenanceDatabase, file.maintenanceDatabase) ?? 'postgres',
     strategy: strategy.data,
+    templateSource,
     hooks: {
       migrate: pick(cli.migrateHook, fromEnv.migrateHook, file.hooks?.migrate),
       seed: pick(cli.seedHook, fromEnv.seedHook, file.hooks?.seed),

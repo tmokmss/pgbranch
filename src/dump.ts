@@ -8,7 +8,7 @@ export class ToolMissingError extends Error {
   constructor(tool: string) {
     super(
       `"${tool}" was not found in PATH. The "dump" strategy needs pg_dump and pg_restore ` +
-        '(install the PostgreSQL client tools, same major version as the server or newer).',
+        '(install the PostgreSQL client tools, same major version as the server).',
     );
     this.name = 'ToolMissingError';
   }

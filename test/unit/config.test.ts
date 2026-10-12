@@ -89,6 +89,14 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ cwd: dirWith(content), env: { PGBRANCH_ADMIN_URL: ADMIN } })).toThrow(pattern);
   });
 
+  it('reads templateSource and rejects a managed database as the source', () => {
+    const env = { PGBRANCH_ADMIN_URL: ADMIN, PGBRANCH_TEMPLATE_SOURCE: 'appdb' };
+    expect(loadConfig({ cwd: dirWith({ prefix: 'app' }), env }).templateSource).toBe('appdb');
+    expect(() => loadConfig({ cwd: dirWith({ prefix: 'app', templateSource: 'app_template' }), env: { PGBRANCH_ADMIN_URL: ADMIN } })).toThrow(
+      /templateSource/,
+    );
+  });
+
   it('requires a prefix', () => {
     expect(() => loadConfig({ cwd: dirWith({}), env: { PGBRANCH_ADMIN_URL: ADMIN } })).toThrow(/prefix/);
   });

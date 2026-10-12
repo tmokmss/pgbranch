@@ -2,7 +2,9 @@ import { afterAll, describe, expect, it } from 'vitest';
 import pg from 'pg';
 import { withDatabase } from '../../src/url.js';
 import {
+  APP_ROLE,
   appRoleUrl,
+  ROLE,
   databases,
   dropAllWithPrefix,
   enabled,
@@ -113,5 +115,61 @@ describe.skipIf(!enabled)('template refresh', () => {
       await b.close();
     }
     expect(await databases(prefix)).toEqual([`${prefix}_template`]);
+  });
+});
+
+describe.skipIf(!enabled)('template refresh from a template source', () => {
+  const prefix = uniquePrefix('tsrc');
+  // Not managed by pgbranch: it does not start with `${prefix}_`.
+  const source = `src_${prefix}`;
+  const config = makeConfig(prefix, {
+    templateSource: source,
+    hooks: { migrate: sqlHook('alter table items add column if not exists v2 int'), seed: sqlHook('insert into items values (99)') },
+  });
+
+  afterAll(async () => {
+    await dropAllWithPrefix(prefix);
+    await superQuery(`drop database if exists "${source}" with (force)`);
+  });
+
+  it('dumps the source into the template, runs migrate, and leaves the source as it was', async () => {
+    await superQuery(`create database "${source}" owner pgbranch_it`);
+    await superQuery('create table items (id int)', [], source);
+    await superQuery('insert into items values (1)', [], source);
+    await superQuery(`alter table items owner to ${ROLE}`, [], source);
+    await superQuery(`grant select on items to ${APP_ROLE}`, [], source);
+    const holder = new pg.Client({ connectionString: appRoleUrl(source) });
+    await holder.connect();
+    try {
+      const first = await withApp(config, (app) => app.templateRefresh());
+      expect(first).toMatchObject({ fromEmpty: false, migrated: true, seeded: false });
+
+      await superQuery('insert into items values (2)', [], source);
+      await withApp(config, (app) => app.templateRefresh());
+      expect(await databases(prefix)).toEqual([`${prefix}_template`]);
+
+      const { database } = await withApp(config, (app) => app.create('check', { migrate: false }));
+      expect(await columns(database)).toEqual(['id', 'v2']);
+      expect(await superQuery('select id from items order by id', [], database)).toEqual([{ id: 1 }, { id: 2 }]);
+
+      expect(await holder.query('select id from items order by id')).toMatchObject({ rows: [{ id: 1 }, { id: 2 }] });
+      expect(await columns(source)).toEqual(['id']);
+      const rows = await superQuery<{ datistemplate: boolean; datallowconn: boolean }>(
+        'select datistemplate, datallowconn from pg_database where datname = $1',
+        [source],
+      );
+      expect(rows).toEqual([{ datistemplate: false, datallowconn: true }]);
+    } finally {
+      await holder.end();
+    }
+  });
+
+  it('fails without touching the template when the source does not exist', async () => {
+    const before = await databases(prefix);
+    const missing = makeConfig(prefix, { templateSource: `missing_${prefix}` });
+    await withApp(missing, async (app) => {
+      await expect(app.templateRefresh()).rejects.toThrow(/does not exist/);
+    });
+    expect(await databases(prefix)).toEqual(before);
   });
 });

@@ -175,7 +175,7 @@ export class PgBranch {
   }
 
   private async prepareStrategy(): Promise<void> {
-    if (this.config.strategy === 'dump') {
+    if (this.config.strategy === 'dump' || this.config.templateSource !== undefined) {
       await checkDumpTools();
     }
   }
@@ -212,6 +212,19 @@ export class PgBranch {
     if (this.config.strategy !== 'dump') return;
     this.ops.note(`pg_restore into ${target}`);
     if (!file) return;
+    try {
+      await restoreDatabase(this.config.adminUrl, target, file);
+    } finally {
+      await file.cleanup();
+    }
+  }
+
+  /** Dump `source` and restore it into `target`. `source` is only read, never changed. */
+  private async copyFromSource(source: string, target: string): Promise<void> {
+    this.ops.note(`pg_dump ${source}`);
+    this.ops.note(`pg_restore into ${target}`);
+    if (this.dryRun) return;
+    const file = await dumpDatabase(this.config.adminUrl, source);
     try {
       await restoreDatabase(this.config.adminUrl, target, file);
     } finally {
@@ -414,11 +427,12 @@ export class PgBranch {
     const tmpl = templateName(this.config.prefix);
     const next = templateNextName(this.config.prefix);
     const old = templateOldName(this.config.prefix);
+    const source = this.config.templateSource;
 
     return this.withLock(async () => {
       await this.prepareStrategy();
 
-      // 1. Build _next from the current template, or empty.
+      // 1. Build _next: empty to restore templateSource into, a copy of the current template, or empty.
       let fromEmpty = false;
       let dump: DumpFile | undefined;
       await this.withLock(async () => {
@@ -431,7 +445,12 @@ export class PgBranch {
         if (await this.ops.drop(next)) this.log.warn(`Dropped leftover ${next}`);
         if (await this.ops.drop(old)) this.log.warn(`Dropped leftover ${old}`);
 
-        if (await this.ops.exists(tmpl)) {
+        if (source !== undefined) {
+          if (!(await this.ops.exists(source))) {
+            throw new PgBranchError(`Template source database ${source} does not exist`);
+          }
+          await this.ops.create(next, { baseTemplate: 'template0' });
+        } else if (await this.ops.exists(tmpl)) {
           dump = await this.startCopy(tmpl, next, false);
         } else {
           fromEmpty = true;
@@ -443,7 +462,8 @@ export class PgBranch {
       let migrated = false;
       let seeded = false;
       try {
-        await this.finishCopy(dump, next);
+        if (source !== undefined) await this.copyFromSource(source, next);
+        else await this.finishCopy(dump, next);
         migrated = await this.runHook('migrate', next, undefined);
         if (fromEmpty) seeded = await this.runHook('seed', next, undefined);
       } catch (err) {
